@@ -45,6 +45,7 @@ import '../utils/json_normalization.dart';
 import '../utils/message_tree_utils.dart' as message_tree;
 import 'conversation_parsing.dart';
 import 'settings_service.dart';
+import 'speech_transcription_service.dart';
 import 'worker_manager.dart';
 import 'server_tls_http_client_factory.dart';
 
@@ -687,7 +688,7 @@ enum HealthCheckResult {
   unreachable,
 }
 
-class ApiService {
+class ApiService implements SpeechTranscriptionService {
   final Dio _dio;
   final ServerConfig serverConfig;
   final WorkerManager _workerManager;
@@ -5711,6 +5712,7 @@ class ApiService {
     return const [];
   }
 
+  @override
   Future<Map<String, dynamic>> transcribeSpeech({
     required Uint8List audioBytes,
     String? fileName,

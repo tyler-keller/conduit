@@ -1331,4 +1331,56 @@ void main() {
       check((req.data as Map)['approval_id']).equals('approval/../evil#');
     });
   });
+
+  group('transcribeSpeech', () {
+    test('posts multipart audio to the OpenAI-compatible path', () async {
+      final capture = _CaptureInterceptor({'text': 'hello there'});
+      final result = await _service(capture).transcribeSpeech(
+        audioBytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
+        fileName: 'clip.wav',
+        mimeType: 'audio/wav',
+      );
+
+      final req = capture.requests.single;
+      check(req.method).equals('POST');
+      check(req.path).equals('http://host:8642/v1/audio/transcriptions');
+      check(req.data).isA<FormData>();
+      final form = req.data as FormData;
+      check(form.files.map((e) => e.key)).deepEquals(<String>['file']);
+      check(form.files.single.value.filename).equals('clip.wav');
+      check(result['text']).equals('hello there');
+    });
+
+    test('forwards a language hint when one is supplied', () async {
+      final capture = _CaptureInterceptor({'text': 'bonjour'});
+      await _service(capture).transcribeSpeech(
+        audioBytes: Uint8List.fromList(<int>[9]),
+        language: 'fr',
+      );
+
+      final form = capture.requests.single.data as FormData;
+      check(
+        form.fields.map((e) => '${e.key}=${e.value}').toList(),
+      ).deepEquals(<String>['language=fr']);
+    });
+
+    test('omits the language field when it is blank', () async {
+      final capture = _CaptureInterceptor({'text': 'x'});
+      await _service(capture).transcribeSpeech(
+        audioBytes: Uint8List.fromList(<int>[9]),
+        language: '   ',
+      );
+
+      final form = capture.requests.single.data as FormData;
+      check(form.fields).isEmpty();
+    });
+
+    test('rejects an empty recording before issuing a request', () async {
+      final capture = _CaptureInterceptor({'text': 'x'});
+      await check(
+        _service(capture).transcribeSpeech(audioBytes: Uint8List(0)),
+      ).throws<ArgumentError>();
+      check(capture.requests).isEmpty();
+    });
+  });
 }

@@ -13,10 +13,11 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:vad/vad.dart' show VadHandler;
 
 import '../../../core/providers/app_providers.dart';
-import '../../../core/services/api_service.dart';
 import '../../../core/services/background_streaming_handler.dart';
 import '../../../core/services/settings_service.dart';
+import '../../../core/services/speech_transcription_service.dart';
 import '../../../core/utils/debug_logger.dart';
+import '../../hermes/providers/hermes_providers.dart';
 import 'native_stt_service.dart';
 import 'server_vad_recorder.dart';
 
@@ -92,7 +93,7 @@ class VoiceInputService {
   VadHandler? _vadHandler;
   ServerVadRecorderSession? _serverVadRecorderSession;
   final NativeSttService _nativeStt;
-  final ApiService? _api;
+  final SpeechTranscriptionService? _transcriber;
   final Ref? _ref;
   final ServerVadRecorderClient Function() _serverVadRecorderFactory;
   bool _isInitialized = false;
@@ -143,7 +144,7 @@ class VoiceInputService {
   @protected
   String get deviceLocaleTag =>
       WidgetsBinding.instance.platformDispatcher.locale.toLanguageTag();
-  bool get hasServerStt => _api != null;
+  bool get hasServerStt => _transcriber != null;
   SttPreference get preference => _preference;
   bool get prefersServerOnly => _preference == SttPreference.serverOnly;
   bool get prefersDeviceOnly => _preference == SttPreference.deviceOnly;
@@ -152,12 +153,12 @@ class VoiceInputService {
       Platform.environment.containsKey('SIMULATOR_DEVICE_NAME');
 
   VoiceInputService({
-    ApiService? api,
+    SpeechTranscriptionService? transcriber,
     Ref? ref,
     NativeSttService? nativeStt,
     @visibleForTesting
     ServerVadRecorderClient Function()? serverVadRecorderFactory,
-  }) : _api = api,
+  }) : _transcriber = transcriber,
        _ref = ref,
        _nativeStt = nativeStt ?? NativeSttService(),
        _serverVadRecorderFactory =
@@ -1035,15 +1036,15 @@ class VoiceInputService {
   }
 
   Future<void> _processVadSamples(List<double> samples) async {
-    final api = _api;
-    if (api == null) return;
+    final transcriber = _transcriber;
+    if (transcriber == null) return;
 
     try {
       final wavBytes = _samplesToWav(samples);
       final fileName =
           'conduit_voice_${DateTime.now().millisecondsSinceEpoch}.wav';
 
-      final response = await api.transcribeSpeech(
+      final response = await transcriber.transcribeSpeech(
         audioBytes: wavBytes,
         fileName: fileName,
         mimeType: 'audio/wav',
@@ -1316,9 +1317,30 @@ class VoiceInputService {
   }
 }
 
+/// Resolves which backend performs server-side speech-to-text, preferring an
+/// authenticated Open WebUI session and otherwise falling back to Hermes when
+/// it advertises `audio_api`. Capabilities are watched rather than read
+/// because discovery resolves asynchronously after boot.
+final speechTranscriptionServiceProvider = Provider<SpeechTranscriptionService?>(
+  (ref) {
+    final api = ref.watch(apiServiceProvider);
+    if (api != null) return api;
+
+    if (!ref.watch(hermesConfigProvider).isUsable) return null;
+    final capabilities = ref.watch(hermesCapabilitiesProvider).asData?.value;
+    if (capabilities == null || !capabilities.audioTranscription) return null;
+    final hermes = ref.watch(hermesApiServiceProvider);
+    // Cast required, not cosmetic: SpeechTranscriptionService is not a subtype
+    // of HermesBackendService, so `is` cannot promote the declared type.
+    return hermes is SpeechTranscriptionService
+        ? hermes as SpeechTranscriptionService
+        : null;
+  },
+);
+
 final voiceInputServiceProvider = Provider<VoiceInputService>((ref) {
-  final api = ref.watch(apiServiceProvider);
-  final service = VoiceInputService(api: api, ref: ref);
+  final transcriber = ref.watch(speechTranscriptionServiceProvider);
+  final service = VoiceInputService(transcriber: transcriber, ref: ref);
   final currentSettings = ref.read(appSettingsProvider);
   service.updatePreference(currentSettings.sttPreference);
   service.setLocale(currentSettings.voiceLocaleId);

@@ -12,6 +12,7 @@ class HermesCapabilities {
     this.jobsAdmin = true,
     this.sessions = true,
     this.inputImages = false,
+    this.audioTranscription = false,
   });
 
   final bool runApproval;
@@ -33,6 +34,11 @@ class HermesCapabilities {
   /// inferred from its advertised Responses streaming API. It intentionally
   /// remains false when discovery is unavailable or ambiguous.
   final bool inputImages;
+
+  /// Whether the server transcribes uploaded audio
+  /// (`POST /v1/audio/transcriptions`). Fail-closed like [inputImages] so a
+  /// server predating the endpoint keeps voice input on device.
+  final bool audioTranscription;
 
   /// The compatibility default used while loading or when discovery fails.
   static const HermesCapabilities enabledByDefault = HermesCapabilities();
@@ -64,7 +70,24 @@ class HermesCapabilities {
         'session_key_header',
       ]),
       inputImages: _resolveResponsesImageInput(json),
+      audioTranscription: _resolveAudioTranscription(json),
     );
+  }
+
+  static bool _resolveAudioTranscription(Map<String, dynamic> json) {
+    final features = json['features'];
+    final featureFlag = features is Map ? features['audio_api'] : null;
+    final topLevelFlag = json['audio_api'];
+    if (featureFlag == false || topLevelFlag == false) return false;
+    if (featureFlag == true || topLevelFlag == true) return true;
+
+    final endpoints = json['endpoints'];
+    if (endpoints is! Map) return false;
+    final endpoint = endpoints['audio_transcriptions'];
+    if (endpoint is String) return endpoint.trim().isNotEmpty;
+    if (endpoint is! Map) return false;
+    final path = endpoint['path'];
+    return path is String && path.trim().isNotEmpty;
   }
 
   /// Looks for any of [names] as an explicit boolean in `features`/top-level,

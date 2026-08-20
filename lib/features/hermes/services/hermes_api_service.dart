@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 
 import '../../../core/services/openai_responses_codec.dart';
+import '../../../core/services/speech_transcription_service.dart';
 import '../../../core/utils/debug_logger.dart';
 import '../models/hermes_chat_input.dart';
 import '../models/hermes_config.dart';
@@ -794,7 +795,11 @@ Future<bool> testHermesDraftConnection(
 /// different backend with its own bearer auth and `X-Hermes-*` headers, and
 /// reusing the OpenWebUI auth interceptor (with its public-endpoint list and
 /// 401/403 escalation) would be wrong here.
-class HermesApiService implements HermesBackendService, HermesTurnService {
+class HermesApiService
+    implements
+        HermesBackendService,
+        HermesTurnService,
+        SpeechTranscriptionService {
   HermesApiService({
     required this.config,
     Dio? dio,
@@ -1610,6 +1615,41 @@ class HermesApiService implements HermesBackendService, HermesTurnService {
   @override
   Future<Map<String, dynamic>> getCapabilities() async {
     final data = await _requestBoundedJson('GET', '$_root/v1/capabilities');
+    return data is Map ? data.cast<String, dynamic>() : const {};
+  }
+
+  /// Transcribes recorded audio (`POST /v1/audio/transcriptions`), the
+  /// OpenAI-compatible multipart surface returning a `{"text": ...}` body.
+  @override
+  Future<Map<String, dynamic>> transcribeSpeech({
+    required Uint8List audioBytes,
+    String? fileName,
+    String? mimeType,
+    String? language,
+  }) async {
+    if (audioBytes.isEmpty) {
+      throw ArgumentError('audioBytes cannot be empty for transcription');
+    }
+    final resolvedFileName = (fileName != null && fileName.trim().isNotEmpty)
+        ? fileName.trim()
+        : 'audio.wav';
+    final resolvedMimeType = (mimeType != null && mimeType.trim().isNotEmpty)
+        ? mimeType.trim()
+        : 'audio/wav';
+    final formData = FormData.fromMap({
+      'file': MultipartFile.fromBytes(
+        audioBytes,
+        filename: resolvedFileName,
+        contentType: DioMediaType.parse(resolvedMimeType),
+      ),
+      if (language != null && language.trim().isNotEmpty)
+        'language': language.trim(),
+    });
+    final data = await _requestBoundedJson(
+      'POST',
+      '$_root/v1/audio/transcriptions',
+      data: formData,
+    );
     return data is Map ? data.cast<String, dynamic>() : const {};
   }
 
